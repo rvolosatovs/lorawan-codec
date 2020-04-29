@@ -7,9 +7,9 @@ import (
 	"log"
 	"os"
 
-	"go.thethings.network/lorawan-stack/pkg/encoding/lorawan"
-	"go.thethings.network/lorawan-stack/pkg/ttnpb"
-	"go.thethings.network/lorawan-stack/pkg/types"
+	"github.com/rvolosatovs/lorawan-stack/v3/pkg/encoding/lorawan"
+	"github.com/rvolosatovs/lorawan-stack/v3/pkg/ttnpb"
+	"github.com/rvolosatovs/lorawan-stack/v3/pkg/types"
 )
 
 func init() {
