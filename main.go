@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -42,7 +43,11 @@ type Config struct {
 	NwkSEncKey types.AES128Key
 }
 
-func decode(w io.Writer, b []byte, conf Config) error {
+func decode(w io.Writer, r io.Reader, conf Config) error {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
 	var msg ttnpb.Message
 	if err := lorawan.UnmarshalMessage(b, &msg); err != nil {
 		return fmt.Errorf("failed to decode frame as LoRaWAN: %w", err)
@@ -141,7 +146,14 @@ func main() {
 	nwkSEncKeyStr := flag.String("nwk_s_enc_key", "", "NwkSEncKey")
 	sNwkSIntKeyStr := flag.String("s_nwk_s_int_key", "", "SNwkSIntKey")
 
+	useBase64 := flag.Bool("base64", false, "Use base64 encoding for LoRaWAN frames")
+	useHex := flag.Bool("hex", false, "Use hex encoding for LoRaWAN frames")
+
 	flag.Parse()
+
+	if *useBase64 && *useHex {
+		log.Fatal("Only one of `base64` or `hex` can be specified")
+	}
 
 	if *quiet {
 		log.SetOutput(ioutil.Discard)
@@ -209,15 +221,20 @@ func main() {
 		log.Fatal("Encoding not implemented")
 	}
 
+	byteReader := &bytes.Reader{}
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
-		src := sc.Bytes()
-		dst := make([]byte, hex.DecodedLen(len(src)))
-		_, err := hex.Decode(dst, src)
-		if err != nil {
-			log.Printf("Failed to decode stdin as hex: %s", err)
+		byteReader.Reset(sc.Bytes())
+		var r io.Reader
+		switch {
+		case *useBase64:
+			r = base64.NewDecoder(base64.StdEncoding, byteReader)
+		case *useHex:
+			r = hex.NewDecoder(byteReader)
+		default:
+			r = byteReader
 		}
-		if err := decode(os.Stdout, dst, conf); err != nil {
+		if err := decode(os.Stdout, r, conf); err != nil {
 			log.Printf("Failed to decode frame: %s", err)
 		}
 	}
