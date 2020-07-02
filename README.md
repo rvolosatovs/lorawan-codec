@@ -47,29 +47,42 @@ Simple one-off hex-encoded frame decoding:
     }
 ```
 
-Decode frames from gateway log stream:
+Decode and decrypt frames from gateway log stream on the fly:
 ```bash
-    $ tail -f ~/mnt/gateway/var/log/pkt_fwd.log | rg -o --line-buffered 'JSON (down|up): (.*)' -r '$2' | jq --unbuffered -r '.[] | .[] | .data?' | go run github.com/rvolosatovs/lorawan-codec -base64 -f_nwk_s_int_key 88A4CB739A3579D7BB227156FBEDC227 | jq 
+    $ tail -f ~/mnt/gateway/var/log/pkt_fwd.log | rg -o --line-buffered 'JSON (down|up): (.*)' -r '$2' | jq --unbuffered -r '(select(.rxpk? != null) | .rxpk | .[] | .data), (select(.txpk? != null) | .txpk.data)' | go run main.go -base64 -app_key 01020304050607080102030405060708 | jq
     {
-      "mhdr": {},
-      "mic": "9KSzhQ==",
+      "mhdr": {
+        "m_type": "JOIN_REQUEST",
+        "major": "LORAWAN_R1"
+      },
+      "mic": "Vv4FEg==",
       "payload": {
         "join_eui": "01020304DEADBEEF",
         "dev_eui": "DEADBEEF01020304",
-        "dev_nonce": "F17C"
+        "dev_nonce": "F8EC"
       }
     }
     {
       "mhdr": {
-        "m_type": "UNCONFIRMED_UP"
+        "m_type": "JOIN_ACCEPT",
+        "major": "LORAWAN_R1"
       },
-      "mic": "WRV9FA==",
+      "mic": "GL26bA==",
       "payload": {
-        "f_hdr": {
-          "dev_addr": "2700002A",
-          "f_ctrl": {
-            "adr": true
-          }
+        "encrypted": "09jOfnDN/QdEaLF8zMUdM6m34QqmpSOl+S+1FIXEVcQ=",
+        "join_nonce": "00001A",
+        "net_id": "000000",
+        "dev_addr": "013BBB8B",
+        "dl_settings": {},
+        "rx_delay": 5,
+        "cf_list": {
+          "freq": [
+            8671000,
+            8673000,
+            8675000,
+            8677000,
+            8679000
+          ]
         }
       }
     }

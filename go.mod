@@ -8,4 +8,7 @@ replace gocloud.dev => gocloud.dev v0.19.0
 
 go 1.14
 
-require go.thethings.network/lorawan-stack/v3 v3.8.5-0.20200701092401-336d059baf02
+require (
+	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826
+	go.thethings.network/lorawan-stack/v3 v3.8.5-0.20200701092401-336d059baf02
+)

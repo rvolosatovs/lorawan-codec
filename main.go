@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/mohae/deepcopy"
 	"go.thethings.network/lorawan-stack/v3/pkg/band"
 	"go.thethings.network/lorawan-stack/v3/pkg/crypto"
 	"go.thethings.network/lorawan-stack/v3/pkg/encoding/lorawan"
@@ -40,6 +41,8 @@ func macBuffer(pld *ttnpb.MACPayload) []byte {
 type Config struct {
 	PHY        band.Band
 	MACVersion ttnpb.MACVersion
+
+	AppKey     types.AES128Key
 	NwkSEncKey types.AES128Key
 }
 
@@ -52,79 +55,103 @@ func decode(w io.Writer, r io.Reader, conf Config) error {
 	if err := lorawan.UnmarshalMessage(b, &msg); err != nil {
 		return fmt.Errorf("failed to decode frame as LoRaWAN: %w", err)
 	}
+	pld, mic := func() (interface{}, []byte) {
+		switch msg.MHDR.MType {
+		case ttnpb.MType_JOIN_REQUEST:
+			return msg.GetJoinRequestPayload(), msg.MIC
+
+		case ttnpb.MType_REJOIN_REQUEST:
+			return msg.GetRejoinRequestPayload(), msg.MIC
+
+		case ttnpb.MType_JOIN_ACCEPT:
+			pld := msg.GetJoinAcceptPayload()
+			pldBuf, err := crypto.DecryptJoinAccept(conf.AppKey, pld.Encrypted)
+			if err != nil {
+				log.Printf("Failed to decrypt JoinAccept: %s", err)
+				return pld, nil
+			}
+			n := len(pldBuf)
+			if n < 4 {
+				log.Printf("Invalid JoinAccept length, expected at least 4 bytes, got: %d", n)
+				return pld, nil
+			}
+			pldBuf, mic := pldBuf[:n-4], pldBuf[n-4:]
+			decPld := deepcopy.Copy(pld).(*ttnpb.JoinAcceptPayload)
+			if err := lorawan.UnmarshalJoinAcceptPayload(pldBuf, decPld); err != nil {
+				log.Printf("Failed to decode JoinAccept: %s", err)
+				return pld, mic
+			}
+			return decPld, mic
+
+		case ttnpb.MType_UNCONFIRMED_DOWN, ttnpb.MType_CONFIRMED_DOWN:
+			pld := msg.GetMACPayload()
+			macBuf := macBuffer(pld)
+			if len(macBuf) > 0 {
+				log.Println("NOTE: Downlink MAC command parsing is not implemented yet")
+			}
+			if pld.FPort > 0 {
+				log.Println("NOTE: Downlink application payload decryption is not implemented yet")
+			}
+			return pld, msg.MIC
+
+		case ttnpb.MType_UNCONFIRMED_UP, ttnpb.MType_CONFIRMED_UP:
+			pld := msg.GetMACPayload()
+			macBuf := macBuffer(pld)
+			if len(macBuf) > 0 && (len(pld.FOpts) == 0 || conf.MACVersion.EncryptFOpts()) {
+				for msb := uint32(0); msb < 0xff; msb++ {
+					fCnt := msb<<8 | pld.FCnt
+					macBuf, err := crypto.DecryptUplink(conf.NwkSEncKey, pld.DevAddr, fCnt, macBuf, pld.FPort != 0)
+					if err != nil {
+						log.Printf("Failed to decrypt MAC buffer with FCnt %v: %s", fCnt, err)
+					} else if pld.FPort == 0 {
+						pld.FRMPayload = macBuf
+						break
+					} else {
+						pld.FOpts = macBuf
+						break
+					}
+				}
+			}
+			var macCommands []*ttnpb.MACCommand
+			for r := bytes.NewReader(macBuf); r.Len() > 0; {
+				cmd := &ttnpb.MACCommand{}
+				if err := lorawan.DefaultMACCommands.ReadUplink(conf.PHY, r, cmd); err != nil {
+					log.Printf("Failed to read MAC command: %s", err)
+					break
+				}
+				macCommands = append(macCommands, cmd)
+			}
+			if pld.FPort > 0 {
+				log.Printf("NOTE: Uplink application payload decryption is not implemented yet")
+			}
+			return struct {
+				*ttnpb.MACPayload
+				MACCommands []*ttnpb.MACCommand `json:"mac_commands,omitempty"`
+			}{
+				MACPayload:  pld,
+				MACCommands: macCommands,
+			}, msg.MIC
+		default:
+			log.Printf("Unmatched FType: %v", msg.MHDR.MType)
+			return nil, msg.MIC
+		}
+	}()
+
+	type mhdr struct {
+		MType ttnpb.MType `json:"m_type"`
+		Major ttnpb.Major `json:"major"`
+	}
 	if err := json.NewEncoder(w).Encode(struct {
-		MHDR    ttnpb.MHDR  `json:"mhdr"`
+		MHDR    mhdr        `json:"mhdr"`
 		MIC     []byte      `json:"mic"`
 		Payload interface{} `json:"payload"`
 	}{
-		MHDR: msg.MHDR,
-		MIC:  msg.MIC,
-		Payload: func() interface{} {
-			type macPayload struct {
-				*ttnpb.MACPayload
-				MACCommands []*ttnpb.MACCommand `json:"mac_commands,omitempty"`
-			}
-
-			switch msg.MHDR.MType {
-			case ttnpb.MType_JOIN_REQUEST:
-				return msg.GetJoinRequestPayload()
-
-			case ttnpb.MType_REJOIN_REQUEST:
-				return msg.GetRejoinRequestPayload()
-
-			case ttnpb.MType_JOIN_ACCEPT:
-				return msg.GetJoinAcceptPayload()
-
-			case ttnpb.MType_UNCONFIRMED_DOWN, ttnpb.MType_CONFIRMED_DOWN:
-				pld := msg.GetMACPayload()
-				macBuf := macBuffer(pld)
-				if len(macBuf) > 0 {
-					log.Println("NOTE: Downlink MAC command parsing is not implemented yet")
-				}
-				if pld.FPort > 0 {
-					log.Println("NOTE: Downlink application payload decryption is not implemented yet")
-				}
-				return pld
-
-			case ttnpb.MType_UNCONFIRMED_UP, ttnpb.MType_CONFIRMED_UP:
-				pld := msg.GetMACPayload()
-				macBuf := macBuffer(pld)
-				if len(macBuf) > 0 && (len(pld.FOpts) == 0 || conf.MACVersion.EncryptFOpts()) {
-					for msb := uint32(0); msb < 0xff; msb++ {
-						fCnt := msb<<8 | pld.FCnt
-						macBuf, err := crypto.DecryptUplink(conf.NwkSEncKey, pld.DevAddr, fCnt, macBuf, pld.FPort != 0)
-						if err != nil {
-							log.Printf("Failed to decrypt MAC buffer with FCnt %v: %s", fCnt, err)
-						} else if pld.FPort == 0 {
-							pld.FRMPayload = macBuf
-							break
-						} else {
-							pld.FOpts = macBuf
-							break
-						}
-					}
-				}
-				var macCommands []*ttnpb.MACCommand
-				for r := bytes.NewReader(macBuf); r.Len() > 0; {
-					cmd := &ttnpb.MACCommand{}
-					if err := lorawan.DefaultMACCommands.ReadUplink(conf.PHY, r, cmd); err != nil {
-						log.Printf("Failed to read MAC command: %s", err)
-						break
-					}
-					macCommands = append(macCommands, cmd)
-				}
-				if pld.FPort > 0 {
-					log.Printf("NOTE: Uplink application payload decryption is not implemented yet")
-				}
-				return macPayload{
-					MACPayload:  pld,
-					MACCommands: macCommands,
-				}
-			default:
-				log.Printf("Unmatched FType: %v", msg.MHDR.MType)
-				return nil
-			}
-		}(),
+		MHDR: mhdr{
+			MType: msg.MHDR.MType,
+			Major: msg.MHDR.Major,
+		},
+		MIC:     mic,
+		Payload: pld,
 	}); err != nil {
 		return fmt.Errorf("failed to encode frame to JSON: %w", err)
 	}
@@ -140,6 +167,8 @@ func main() {
 
 	macStr := flag.String("mac", "1.0.4", "MAC version")
 	phyStr := flag.String("phy", "1.0.3-a", "PHY version")
+
+	appKeyStr := flag.String("app_key", "", "AppKey")
 
 	appSKeyStr := flag.String("app_s_key", "", "AppSKey")
 	fNwkSIntKeyStr := flag.String("f_nwk_s_int_key", "", "FNwkSIntKey")
@@ -175,6 +204,13 @@ func main() {
 	phy, err = phy.Version(phyVersion)
 	if err != nil {
 		log.Fatalf("Failed to query band version: %s", err)
+	}
+
+	var appKey types.AES128Key
+	if *appKeyStr != "" {
+		if err := appKey.UnmarshalText([]byte(*appKeyStr)); err != nil {
+			log.Fatalf("Failed to parse AppKey: %s", err)
+		}
 	}
 
 	var appSKey types.AES128Key
@@ -214,6 +250,7 @@ func main() {
 	conf := Config{
 		PHY:        phy,
 		MACVersion: macVersion,
+		AppKey:     appKey,
 		NwkSEncKey: nwkSEncKey,
 	}
 
