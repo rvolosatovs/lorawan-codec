@@ -50,7 +50,7 @@ $ printf '40BF000027850100030706FF08FEB3E9A6' | go run github.com/rvolosatovs/lo
 ## Decode and decrypt frames from gateway log stream on the fly
 
 ```bash
-$ tail -f ~/mnt/gateway/var/log/pkt_fwd.log | rg -o --line-buffered 'JSON (down|up): (.*)' -r '$2' | jq --unbuffered -r '(select(.rxpk? != null) | .rxpk | .[] | .data), (select(.txpk? != null) | .txpk.data)' | go run main.go -base64 -app_key 01020304050607080102030405060708 | jq
+$ tail -f ~/mnt/gateway/var/log/pkt_fwd.log | rg -o --line-buffered 'JSON (down|up): (.*)' -r '$2' | jq --unbuffered -r '(select(.rxpk? != null) | .rxpk | .[] | .data), (select(.txpk? != null) | .txpk.data)' | go run github.com/rvolosatovs/lorawan-codec -base64 -app_key 01020304050607080102030405060708 | jq
 {
   "mhdr": {
     "m_type": "JOIN_REQUEST",
