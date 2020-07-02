@@ -12,12 +12,12 @@ import (
 	"log"
 	"os"
 
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/band"
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/crypto"
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/encoding/lorawan"
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/jsonpb"
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/ttnpb"
-	"github.com/rvolosatovs/lorawan-stack/v3/pkg/types"
+	"go.thethings.network/lorawan-stack/v3/pkg/band"
+	"go.thethings.network/lorawan-stack/v3/pkg/crypto"
+	"go.thethings.network/lorawan-stack/v3/pkg/encoding/lorawan"
+	"go.thethings.network/lorawan-stack/v3/pkg/jsonpb"
+	"go.thethings.network/lorawan-stack/v3/pkg/ttnpb"
+	"go.thethings.network/lorawan-stack/v3/pkg/types"
 )
 
 var json = &jsonpb.GoGoJSONPb{
