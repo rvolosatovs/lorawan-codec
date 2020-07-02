@@ -4,8 +4,10 @@
 
 # Example
 
+Simple one-off hex-encoded frame decoding:
+
 ```bash
-    $ printf '40BF000027850100030706FF08FEB3E9A6' | go run github.com/rvolosatovs/lorawan-codec | jq
+    $ printf '40BF000027850100030706FF08FEB3E9A6' | go run github.com/rvolosatovs/lorawan-codec -hex | jq
     {
       "mhdr": {
         "m_type": "UNCONFIRMED_UP"
@@ -41,6 +43,34 @@
             }
           }
         ]
+      }
+    }
+```
+
+Decode frames from gateway log stream:
+```bash
+    $ tail -f ~/mnt/gateway/var/log/pkt_fwd.log | rg -o --line-buffered 'JSON (down|up): (.*)' -r '$2' | jq --unbuffered -r '.[] | .[] | .data?' | go run github.com/rvolosatovs/lorawan-codec -base64 -f_nwk_s_int_key 88A4CB739A3579D7BB227156FBEDC227 | jq 
+    {
+      "mhdr": {},
+      "mic": "9KSzhQ==",
+      "payload": {
+        "join_eui": "01020304DEADBEEF",
+        "dev_eui": "DEADBEEF01020304",
+        "dev_nonce": "F17C"
+      }
+    }
+    {
+      "mhdr": {
+        "m_type": "UNCONFIRMED_UP"
+      },
+      "mic": "WRV9FA==",
+      "payload": {
+        "f_hdr": {
+          "dev_addr": "2700002A",
+          "f_ctrl": {
+            "adr": true
+          }
+        }
       }
     }
 ```
